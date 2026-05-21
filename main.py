@@ -7,7 +7,7 @@ from weasyprint import HTML
 
 app = FastAPI(title="車庫財經室戰情看板 API")
 
-# 完整載入指定的追蹤標的清單
+# 這裡是你要求的【真實追蹤標的】代碼清單
 TICKERS = {
     "indices": {"^DJI": "道瓊", "^GSPC": "S&P 500", "^IXIC": "那斯達克", "^SOX": "費半"},
     "commodities": {"GC=F": "黃金", "SI=F": "白銀", "HG=F": "銅", "BZ=F": "布倫特原油"},
@@ -16,20 +16,17 @@ TICKERS = {
 }
 
 def fetch_real_market_data():
+    """連線至 Yahoo Finance 抓取最真實的收盤價數據"""
     results = {}
     for category, group in TICKERS.items():
         results[category] = []
         for tk, name in group.items():
             try:
-                # 抓取最近 5 天數據以計算昨日與今日價差
-                df = yf.download(tk, period="5d", interval="1d", progress=False)
+                # 使用 Ticker.history 方法在雲端環境最穩定，不會報錯
+                stock = yf.Ticker(tk)
+                df = stock.history(period="5d")
                 
-                # 處理新版 yfinance 的 MultiIndex 欄位結構問題
-                if hasattr(df.columns, 'levels'):
-                    df.columns = df.columns.get_level_values(0)
-                    
-                df = df.dropna()
-                if not df.empty and len(df) > 1:
+                if not df.empty and len(df) >= 2:
                     last = float(df["Close"].iloc[-1])
                     prev = float(df["Close"].iloc[-2])
                     chg = last - prev
@@ -38,6 +35,7 @@ def fetch_real_market_data():
                         "name": name, "symbol": tk, "close": last, "chg": chg, "chg_pct": chg_pct
                     })
                 else:
+                    # 如果遇到假日沒開盤或抓不到，預設顯示 0
                     results[category].append({
                         "name": name, "symbol": tk, "close": 0.0, "chg": 0.0, "chg_pct": 0.0
                     })
@@ -49,9 +47,9 @@ def fetch_real_market_data():
     return results
 
 def generate_html_rows(data_list):
+    """一般股價與原物料的 HTML 排版"""
     html_rows = ""
-    if not data_list:
-        return "<tr><td colspan='3' style='text-align:center; color:#a0aec0;'>無資料</td></tr>"
+    if not data_list: return "<tr><td colspan='3'>無資料</td></tr>"
         
     for item in data_list:
         c = item['close']
@@ -73,7 +71,7 @@ def generate_html_rows(data_list):
     return html_rows
 
 def generate_macro_rows(data_list):
-    """專門處理台股與總經(匯率、美債)的特殊排版與邏輯"""
+    """總經數據 (匯率、公債) 的專屬邏輯與排版"""
     html_rows = ""
     if not data_list: return "<tr><td colspan='3'>無資料</td></tr>"
         
@@ -87,6 +85,7 @@ def generate_macro_rows(data_list):
         arrow = "▲" if chg > 0 else "▼" if chg < 0 else "-"
         
         if item['symbol'] == 'TWD=X':
+            # 匯率邏輯：數字變大代表台幣貶值，變小代表升值
             status = "台幣貶值" if chg > 0 else "台幣升值" if chg < 0 else "持平"
             html_rows += f"""
             <tr>
@@ -96,6 +95,7 @@ def generate_macro_rows(data_list):
             </tr>
             """
         elif item['symbol'] == '^TNX':
+            # 殖利率邏輯
             status = "殖利率升" if chg > 0 else "殖利率降" if chg < 0 else "持平"
             html_rows += f"""
             <tr>
@@ -117,8 +117,10 @@ def generate_macro_rows(data_list):
 @app.get("/generate_report")
 def generate_report():
     try:
+        # 抓取即時數據
         market_data = fetch_real_market_data()
         
+        # 轉換為 HTML 表格
         idx_html = generate_html_rows(market_data.get("indices", []))
         cmd_html = generate_html_rows(market_data.get("commodities", []))
         stk_html = generate_html_rows(market_data.get("tech", []))
@@ -133,28 +135,21 @@ def generate_report():
             <meta charset="UTF-8">
             <style>
                 @page {{
-                    size: A4;
-                    margin: 12mm 10mm;
-                    background-color: #121212;
+                    size: A4; margin: 12mm 10mm; background-color: #121212;
                 }}
                 *, *::before, *::after {{ box-sizing: border-box; }}
                 body {{
-                    font-family: "Noto Sans CJK TC", "Noto Sans CJK JP", "Microsoft JhengHei", sans-serif;
-                    color: #e0e0e0;
-                    margin: 0; padding: 0;
-                    font-size: 10pt; line-height: 1.5;
-                    background-image: 
-                        linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
-                        linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+                    font-family: "Noto Sans CJK TC", "Microsoft JhengHei", sans-serif;
+                    color: #e0e0e0; margin: 0; padding: 0; font-size: 10pt; line-height: 1.5;
+                    background-image: linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+                                      linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
                     background-size: 20px 20px;
                 }}
                 .header {{
                     background: linear-gradient(135deg, #1a1a1a, #2d3748);
-                    border-bottom: 2px solid #f6ad55;
-                    padding: 16px 20px; text-align: center; position: relative; border-radius: 8px; margin-bottom: 15px;
+                    border-bottom: 2px solid #f6ad55; padding: 16px 20px; text-align: center; position: relative; border-radius: 8px; margin-bottom: 15px;
                 }}
                 .header h1 {{ margin: 0; font-size: 20pt; font-weight: 900; letter-spacing: 2px; color: #f6ad55; }}
-                .header .subtitle {{ margin-top: 4px; font-size: 11pt; color: #a0aec0; }}
                 .header .date-badge {{
                     position: absolute; top: 16px; left: 20px; background: #2d3748; border: 1px solid #4a5568; 
                     padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 10pt; color: #edf2f7;
@@ -186,7 +181,6 @@ def generate_report():
             <div class="header">
                 <div class="date-badge">{today_str}</div>
                 <h1>🛠️ 車庫財經室 晨間戰情看板</h1>
-                <div class="subtitle">量化終端機數據流全自動產出</div>
             </div>
             
             <table class="layout-table">
@@ -196,39 +190,3 @@ def generate_report():
                         <table class="data-table"><tbody>{idx_html}</tbody></table>
                     </td>
                     <td class="layout-cell">
-                        <div class="section-title">2. 焦點原物料 / 能源</div>
-                        <table class="data-table"><tbody>{cmd_html}</tbody></table>
-                    </td>
-                </tr>
-            </table>
-
-            <table class="layout-table">
-                <tr>
-                    <td class="layout-cell">
-                        <div class="section-title">3. 核心科技巨頭表現</div>
-                        <table class="data-table"><tbody>{stk_html}</tbody></table>
-                    </td>
-                    <td class="layout-cell">
-                        <div class="section-title">4. 台股與總經數據觀測</div>
-                        <table class="data-table"><tbody>{macro_html}</tbody></table>
-                    </td>
-                </tr>
-            </table>
-            
-            <div class="footer-cell">
-                <div class="section-title">📊 核心投資紀律</div>
-                <ul class="summary-list">
-                    <li><strong>量化思維：</strong> 排除市場雜訊，讓客觀數據引導每一步策略。</li>
-                    <li><strong>風險控管：</strong> 匯率與公債為資金流向領先指標，務必堅守停損停利點。</li>
-                    <li><strong>自動化營運：</strong> 減少手動重覆勞動，將精力專注於策略研發。</li>
-                </ul>
-            </div>
-        </body>
-        </html>
-        """
-        output_pdf = "/tmp/garage_report.pdf"
-        HTML(string=html_template).write_pdf(output_pdf)
-        return FileResponse(output_pdf, media_type="application/pdf", filename="garage_report.pdf")
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))

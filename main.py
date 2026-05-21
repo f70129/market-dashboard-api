@@ -190,3 +190,39 @@ def generate_report():
                         <table class="data-table"><tbody>{idx_html}</tbody></table>
                     </td>
                     <td class="layout-cell">
+                        <div class="section-title">2. 焦點原物料 / 能源</div>
+                        <table class="data-table"><tbody>{cmd_html}</tbody></table>
+                    </td>
+                </tr>
+            </table>
+
+            <table class="layout-table">
+                <tr>
+                    <td class="layout-cell">
+                        <div class="section-title">3. 核心科技巨頭表現</div>
+                        <table class="data-table"><tbody>{stk_html}</tbody></table>
+                    </td>
+                    <td class="layout-cell">
+                        <div class="section-title">4. 台股與總經數據觀測</div>
+                        <table class="data-table"><tbody>{macro_html}</tbody></table>
+                    </td>
+                </tr>
+            </table>
+            
+            <div class="footer-cell">
+                <div class="section-title">📊 核心投資紀律</div>
+                <ul class="summary-list">
+                    <li><strong>量化思維：</strong> 排除市場雜訊，讓客觀數據引導每一步策略。</li>
+                    <li><strong>風險控管：</strong> 匯率與公債為資金流向領先指標，務必堅守停損停利點。</li>
+                    <li><strong>自動化營運：</strong> 減少手動重覆勞動，將精力專注於策略研發。</li>
+                </ul>
+            </div>
+        </body>
+        </html>
+        """
+        output_pdf = "/tmp/garage_report.pdf"
+        HTML(string=html_template).write_pdf(output_pdf)
+        return FileResponse(output_pdf, media_type="application/pdf", filename="garage_report.pdf")
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

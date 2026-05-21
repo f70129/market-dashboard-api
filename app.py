@@ -29,7 +29,7 @@ TICKERS = {
     "台股與總經": {"^TWII": "加權指數", "2330.TW": "台積電", "TWD=X": "美元/台幣", "^TNX": "美10年期公債"}
 }
 
-# --- 抓取數據 (加入快取機制，避免頻繁呼叫 API) ---
+# --- 抓取數據 (加入防呆與快取機制) ---
 @st.cache_data(ttl=300) # 每 5 分鐘自動刷新一次快取
 def fetch_data():
     results = {}
@@ -44,9 +44,17 @@ def fetch_data():
                     prev = float(df["Close"].iloc[-2])
                     chg = last - prev
                     pct = (chg / prev) * 100
-                    results[category].append({"name": name, "symbol": tk, "close": last, "chg": chg, "pct": pct})
+                    results[category].append({
+                        "name": name, "symbol": tk, "close": last, "chg": chg, "pct": pct, "has_data": True
+                    })
+                else:
+                    results[category].append({
+                        "name": name, "symbol": tk, "close": 0.0, "chg": 0.0, "pct": 0.0, "has_data": False
+                    })
             except Exception as e:
-                pass
+                results[category].append({
+                    "name": name, "symbol": tk, "close": 0.0, "chg": 0.0, "pct": 0.0, "has_data": False
+                })
     return results
 
 # --- 頁面標題 ---
@@ -63,24 +71,26 @@ with st.spinner('連線至全球市場獲取即時數據中...'):
 for category, items in TICKERS.items():
     st.subheader(f"📌 {category}")
     
-    # 根據該分類的標的數量自動生成多欄位佈局
     cols = st.columns(len(items))
     category_data = data.get(category, [])
     
     for i, item_info in enumerate(category_data):
         with cols[i]:
             name = item_info['name']
+            
+            # 若無數據，顯示佔位符
+            if not item_info['has_data']:
+                st.metric(label=name, value="暫無報價", delta="-")
+                continue
+                
             c = item_info['close']
             chg = item_info['chg']
             pct = item_info['pct']
             
             # 特殊邏輯處理
             if item_info['symbol'] == 'TWD=X':
-                # 匯率：因為小數點較多，特別處理顯示格式
                 val_str = f"{c:.3f}"
                 delta_str = f"{chg:.3f} ({pct:.2f}%)"
-                # Streamlit 預設上漲是綠色，台股習慣上漲是紅色。
-                # 匯率數字變大是貶值(負面)，所以我們設定為 inverse。
                 st.metric(label=name, value=val_str, delta=delta_str, delta_color="inverse")
             
             elif item_info['symbol'] == '^TNX':
@@ -89,12 +99,29 @@ for category, items in TICKERS.items():
                 st.metric(label=name, value=val_str, delta=delta_str, delta_color="inverse")
                 
             else:
-                # 一般股價
                 val_str = f"{c:,.2f}"
                 delta_str = f"{chg:.2f} ({pct:.2f}%)"
-                # 台股習慣：紅漲綠跌。因此將 delta_color 設為 off，稍後可用 CSS 客製，或使用預設美股邏輯
                 st.metric(label=name, value=val_str, delta=delta_str, delta_color="normal")
                 
     st.divider()
 
-st.success("量化策略待命。保持紀律，穩穩向前！")
+# --- 新增：總結與投資建議區塊 ---
+st.subheader("📊 戰情總結與核心建議")
+
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.markdown("""
+    #### 💡 核心投資紀律
+    * **量化思維**：排除市場雜訊與主觀情緒，讓客觀數據引導每一步策略。
+    * **風險控管**：匯率與公債為資金流向的領先指標，務必堅守預設的停損與停利點。
+    * **自動化營運**：減少手動重覆勞動，將專注力保留給高價值的策略研發。
+    """)
+
+with col2:
+    st.info("""
+    **⚙️ 系統狀態**
+    
+    量化監控模組已連線。
+    波動是市場的日常，**紀律才是最終的勝利！**
+    """)

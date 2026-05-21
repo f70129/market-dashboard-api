@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: market-dashboard-api
+    runtime: docker
+    plan: free
+    envVars:
+      - key: DASHBOARD_API_KEY
+        generateValue: true
+      - key: PORT
+        value: 8000
+    healthCheckPath: /health
+    autoDeploy: true

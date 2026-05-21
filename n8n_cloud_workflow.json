@@ -1,0 +1,247 @@
+{
+  "name": "每日戰情看板 — Cloud 版",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 19,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "每日排程 19:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DASHBOARD_API_URL || 'https://YOUR-APP.onrender.com' }}/generate?format=json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Api-Key",
+              "value": "={{ $env.DASHBOARD_API_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "call-api",
+      "name": "呼叫 Python API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "notes": "呼叫部署在 Render 上的 Python API\n回傳 JSON 含 base64 編碼的 PDF\n\n需設定環境變數:\n  DASHBOARD_API_URL = Render 服務的 URL\n  DASHBOARD_API_KEY = API 金鑰"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "success",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-success",
+      "name": "成功？",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 將 base64 PDF 轉成 binary\nconst item = $input.first();\nconst pdfBase64 = item.json.pdf_base64;\nconst date = item.json.date;\nconst source = item.json.source;\n\n// 建立 binary data\nconst binaryData = Buffer.from(pdfBase64, 'base64');\n\nreturn [{\n  json: {\n    date: date,\n    source: source,\n    report_title: `全球市場戰情看板 ${date}`,\n  },\n  binary: {\n    data: {\n      data: pdfBase64,\n      mimeType: 'application/pdf',\n      fileName: `dashboard_${date}.pdf`,\n    }\n  }\n}];"
+      },
+      "id": "convert-binary",
+      "name": "Base64 轉 PDF 檔案",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 200],
+      "notes": "將 API 回傳的 base64 字串\n轉換成 n8n 的 binary data\n供後續節點作為附件發送"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID || 'YOUR_CHAT_ID' }}",
+        "operation": "sendDocument",
+        "binaryPropertyName": "data",
+        "additionalFields": {
+          "caption": "={{ '📊 ' + $json.report_title + '\\n資料來源: ' + $json.source }}"
+        }
+      },
+      "id": "telegram-send",
+      "name": "Telegram 發送",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1140, 80],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $env.EMAIL_TO || 'your@email.com' }}",
+        "subject": "={{ $json.report_title }}",
+        "message": "={{ '請查收今日戰情看板 PDF。\\n資料來源: ' + $json.source }}",
+        "options": {
+          "attachmentsUi": {
+            "attachmentsBinary": [
+              {
+                "property": "data"
+              }
+            ]
+          }
+        }
+      },
+      "id": "gmail-send",
+      "name": "Gmail 寄出",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1140, 220],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIAL_ID",
+          "name": "Gmail"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "={{ 'dashboard_' + $json.date + '.pdf' }}",
+        "folderId": "={{ $env.GDRIVE_FOLDER_ID || '1SsHL3TZv3eyoZGEhEYLtGSv3FaZhpx8P' }}",
+        "options": {}
+      },
+      "id": "gdrive-upload",
+      "name": "Google Drive 上傳",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1140, 360],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "GDRIVE_CREDENTIAL_ID",
+          "name": "Google Drive"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID || 'YOUR_CHAT_ID' }}",
+        "text": "={{ '❌ 戰情看板失敗\\n錯誤: ' + JSON.stringify($json).substring(0, 200) }}",
+        "additionalFields": {}
+      },
+      "id": "error-notify",
+      "name": "錯誤通知",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [900, 400],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "每日排程 19:00": {
+      "main": [
+        [
+          {
+            "node": "呼叫 Python API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "呼叫 Python API": {
+      "main": [
+        [
+          {
+            "node": "成功？",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "成功？": {
+      "main": [
+        [
+          {
+            "node": "Base64 轉 PDF 檔案",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "錯誤通知",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Base64 轉 PDF 檔案": {
+      "main": [
+        [
+          {
+            "node": "Telegram 發送",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Gmail 寄出",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Google Drive 上傳",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": [
+    {
+      "name": "market-data"
+    },
+    {
+      "name": "daily-report"
+    }
+  ],
+  "pinData": {}
+}

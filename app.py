@@ -1,180 +1,259 @@
 import streamlit as st
 import yfinance as yf
+import pandas as pd
+import altair as alt
 import datetime
 
-# --- 1. Streamlit 全域設定 ---
+# ==========================================
+# 1. 網頁全域設定
+# ==========================================
 st.set_page_config(
-    page_title="車庫財經室",
-    page_icon="📊",
+    page_title="全球市場戰情看板",
+    page_icon="🌍",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# 隱藏 Streamlit 預設選單，並強制套用純白底極簡風格
+# 隱藏預設選單，調整版面間距
 st.markdown("""
 <style>
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
 header {visibility: hidden;}
-.stApp { background-color: #ffffff; }
-
-/* 區塊標題設計 (灰底 + 黑色左邊框) */
-.section-title {
-    font-size: 14pt;
-    font-weight: bold;
-    color: #000;
-    border-left: 5px solid #000;
-    padding-left: 10px;
-    margin-bottom: 15px;
-    background-color: #f4f4f4;
-    padding: 8px 12px;
-    border-radius: 4px;
-    font-family: 'Microsoft JhengHei', sans-serif;
-}
-
-/* 數據表格設計 */
-.data-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-family: 'Microsoft JhengHei', sans-serif;
-    margin-bottom: 30px;
-}
-.data-table td {
-    padding: 10px 5px;
-    font-size: 11.5pt;
-    border-bottom: 1px solid #eeeeee;
-    color: #000;
-}
-.text-right { text-align: right; }
-.val { font-weight: bold; color: #000; }
-
-/* 紅漲綠跌 */
-.up { color: #d32f2f; font-weight: bold; }
-.down { color: #2e7d32; font-weight: bold; }
-.neutral { color: #666666; }
+.block-container { padding-top: 2rem; padding-bottom: 2rem; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. 定義追蹤標的 ---
+# ==========================================
+# 2. 標的清單設定
+# ==========================================
 TICKERS = {
-    "1. 全球主要股市指數": {"^DJI": "道瓊", "^GSPC": "S&P 500", "^IXIC": "那斯達克", "^SOX": "費半"},
-    "2. 焦點原物料 / 能源": {"GC=F": "黃金", "CL=F": "WTI原油", "SI=F": "白銀", "HG=F": "銅"},
-    "3. 核心科技巨頭表現": {"AMD": "AMD", "NVDA": "NVDA", "TSM": "TSM", "TSLA": "TSLA", "INTC": "INTC", "MU": "MU", "AAPL": "AAPL"},
-    "4. 台股與總經數據觀測": {"^TWII": "加權指數", "2330.TW": "台積電", "TWD=X": "美元/台幣", "^TNX": "美10年期公債"}
+    "commodities": {
+        "GC=F": "GOLD 黃金", "SI=F": "SILVER 白銀", "HG=F": "HGCOP 銅", 
+        "BZ=F": "BRENT 布倫特原油", "CL=F": "OIL WTI原油", "NG=F": "NGAS 天然氣", 
+        "PA=F": "PALL 鈀", "PL=F": "PLAT 鉑"
+    },
+    "indices": {
+        "^DJI": "道瓊工業指數", "^GSPC": "S&P 500", 
+        "^IXIC": "那斯達克", "^SOX": "費城半導體"
+    },
+    "tech": {
+        "AMD": "AMD", "NVDA": "NVDA", "TSM": "TSM", 
+        "TSLA": "TSLA", "INTC": "INTC", "MU": "MU", "AAPL": "AAPL"
+    },
+    "tw": {
+        "^TWII": "加權指數", "2330.TW": "台積電"
+    },
+    "fx": {
+        "TWD=X": "美元/台幣", "DX-Y.NYB": "DXY 美元指數"
+    },
+    "yields": {
+        "^IRX": "3M 公債", "^FVX": "5Y 公債", 
+        "^TNX": "10Y 公債", "^TYX": "30Y 公債"
+    }
 }
 
-# --- 3. 抓取資料函數 (快取 5 分鐘) ---
+# ==========================================
+# 3. 獲取資料函數 (快取 5 分鐘，抓取近一個月以繪製走勢圖)
+# ==========================================
 @st.cache_data(ttl=300)
-def fetch_data():
+def fetch_all_data():
     results = {}
-    for category, group in TICKERS.items():
-        results[category] = []
+    for cat, group in TICKERS.items():
+        cat_data = {}
         for tk, name in group.items():
             try:
                 stock = yf.Ticker(tk)
-                df = stock.history(period="5d")
+                # 抓取 1 個月的歷史數據以供 Altair 畫走勢圖
+                df = stock.history(period="1mo")
                 if not df.empty and len(df) >= 2:
-                    last = float(df["Close"].iloc[-1])
-                    prev = float(df["Close"].iloc[-2])
-                    chg = last - prev
-                    pct = (chg / prev) * 100
-                    results[category].append({
-                        "name": name, "symbol": tk, "close": last, "chg": chg, "pct": pct, "has_data": True
-                    })
-                else:
-                    results[category].append({"name": name, "symbol": tk, "close": 0, "chg": 0, "pct": 0, "has_data": False})
+                    cat_data[tk] = {'name': name, 'df': df}
             except Exception:
-                results[category].append({"name": name, "symbol": tk, "close": 0, "chg": 0, "pct": 0, "has_data": False})
+                pass
+        results[cat] = cat_data
     return results
 
-# --- 4. 將資料轉為單行 HTML 表格列的函數 ---
-def build_html_rows(data_list):
-    rows = ""
-    for item in data_list:
-        if not item['has_data']:
-            rows += f"<tr><td style='font-weight:bold; color:#000;'>{item['name']} <span style='font-weight:normal; font-size:10.5pt; color:#666;'>({item['symbol']})</span></td><td colspan='2' class='text-right neutral'>暫無報價</td></tr>"
-            continue
+# ==========================================
+# 4. 輔助繪圖函數 (Altair 迷你走勢圖 Sparkline)
+# ==========================================
+def make_sparkline(df, color):
+    df_reset = df.reset_index()
+    # 畫出極簡線圖，隱藏 X/Y 軸標籤與網格線
+    chart = alt.Chart(df_reset).mark_line(strokeWidth=2).encode(
+        x=alt.X('Date:T', axis=None),
+        y=alt.Y('Close:Q', scale=alt.Scale(zero=False), axis=None),
+        color=alt.value(color),
+        tooltip=['Date:T', 'Close:Q']
+    ).properties(height=60)
+    return chart
+
+# ==========================================
+# 5. 主頁面渲染
+# ==========================================
+with st.spinner('連線至全球市場獲取即時數據中...'):
+    data = fetch_all_data()
+
+# --- 頁首 ---
+now_str = datetime.datetime.now().strftime("%Y年%m月%d日 %H:%M")
+st.title("🌍 全球市場戰情看板 Streamlit")
+st.markdown(f"**全球市場 & 台股電子盤 最新數據總整理！** (資料更新時間: `{now_str}`)")
+st.info("💡 波動是日常，紀律是勝利。數據看仔細，投資不怕怕！")
+st.divider()
+
+# --- 兩欄排版 (上半部) ---
+col_left, col_right = st.columns([1, 1.2], gap="large")
+
+with col_left:
+    st.subheader("🛢️ 1. 焦點原物料 / 能源價格")
+    # 將原物料轉換為 DataFrame 並顯示
+    comm_list = []
+    for tk, info in data.get('commodities', {}).items():
+        df = info['df']
+        c = df['Close'].iloc[-1]
+        p = df['Close'].iloc[-2]
+        chg = c - p
+        pct = (chg / p) * 100
+        comm_list.append({
+            "★商品": info['name'], "價格": c, "漲跌": chg, "漲跌(%)": pct
+        })
+    
+    if comm_list:
+        df_comm = pd.DataFrame(comm_list)
+        # 設定 Pandas DataFrame 樣式，加入顏色邏輯 (台灣習慣紅漲綠跌)
+        def color_rule(val):
+            if isinstance(val, float):
+                color = '#ff4b4b' if val > 0 else '#00e676' if val < 0 else 'gray'
+                return f'color: {color}; font-weight: bold;'
+            return ''
+        
+        st.dataframe(
+            df_comm.style.format({"價格": "{:,.2f}", "漲跌": "{:+.2f}", "漲跌(%)": "{:+.2f}%"})
+                         .map(color_rule, subset=['漲跌', '漲跌(%)']),
+            use_container_width=True, hide_index=True
+        )
+
+with col_right:
+    st.subheader("📈 2. 全球主要股市指數表現")
+    idx_cols = st.columns(4)
+    indices_data = data.get('indices', {})
+    
+    for i, (tk, info) in enumerate(indices_data.items()):
+        with idx_cols[i % 4]:
+            df = info['df']
+            c = df['Close'].iloc[-1]
+            p = df['Close'].iloc[-2]
+            chg = c - p
+            pct = (chg / p) * 100
             
-        c = item['close']
-        chg = item['chg']
-        pct = item['pct']
+            st.metric(label=info['name'], value=f"{c:,.2f}", delta=f"{chg:+.2f} ({pct:+.2f}%)")
+            # 依據今日漲跌決定走勢圖顏色
+            line_color = '#ff4b4b' if chg >= 0 else '#00e676' 
+            st.altair_chart(make_sparkline(df, line_color), use_container_width=True)
+
+st.divider()
+
+# --- 兩欄排版 (中半部：科技Top7 vs 台股雙線圖) ---
+col_tech, col_tw = st.columns([1, 1], gap="large")
+
+with col_tech:
+    st.subheader("🔥 3. 美股科技巨頭漲跌幅 (Top 7)")
+    tech_list = []
+    for tk, info in data.get('tech', {}).items():
+        df = info['df']
+        c = df['Close'].iloc[-1]
+        p = df['Close'].iloc[-2]
+        pct = ((c - p) / p) * 100
+        tech_list.append({"代號": tk, "最新價格": c, "漲跌幅(%)": pct})
+    
+    if tech_list:
+        df_tech = pd.DataFrame(tech_list).sort_values(by="漲跌幅(%)", ascending=False)
         
-        # 決定顏色與箭頭 (台灣習慣紅漲綠跌)
-        color_class = "up" if chg > 0 else "down" if chg < 0 else "neutral"
-        sign = "+" if chg > 0 else ""
-        arrow = "▲" if chg > 0 else "▼" if chg < 0 else ""
+        # 繪製 Altair 水平柱狀條 (視覺化)
+        bars = alt.Chart(df_tech).mark_bar().encode(
+            x=alt.X('漲跌幅(%):Q', title='日漲跌幅 (%)'),
+            y=alt.Y('代號:N', sort='-x', title=None),
+            color=alt.condition(
+                alt.datum['漲跌幅(%)'] > 0,
+                alt.value('#ff4b4b'),  # 正值為紅
+                alt.value('#00e676')   # 負值為綠
+            ),
+            tooltip=['代號', '最新價格', '漲跌幅(%)']
+        )
+        # 在柱子旁加上數字標籤
+        text = bars.mark_text(
+            align='left', baseline='middle', dx=3, color='white'
+        ).encode(text=alt.Text('漲跌幅(%):Q', format='+.2f'))
         
-        # 特殊邏輯處理
-        status_text = ""
-        if item['symbol'] == 'TWD=X':
-            status_text = f" <span style='font-size:10.5pt; font-weight:normal; color:#666;'>({'貶值' if chg > 0 else '升值' if chg < 0 else '持平'})</span>"
-            val_str = f"{c:,.3f}"
-            delta_str = f"{abs(chg):,.3f}"
-        elif item['symbol'] == '^TNX':
-            status_text = f" <span style='font-size:10.5pt; font-weight:normal; color:#666;'>({'升' if chg > 0 else '降' if chg < 0 else '持平'})</span>"
-            val_str = f"{c:,.3f}%"
-            delta_str = f"{abs(chg):,.3f} bps"
+        st.altair_chart((bars + text).properties(height=250), use_container_width=True)
+
+with col_tw:
+    st.subheader("🇹🇼 4. 台股市場表現 (大盤 vs 台積電)")
+    tw_data = data.get('tw', {})
+    
+    # 顯示兩張 Metric 卡片
+    m_cols = st.columns(2)
+    for i, (tk, info) in enumerate(tw_data.items()):
+        df = info['df']
+        c = df['Close'].iloc[-1]
+        chg = c - df['Close'].iloc[-2]
+        pct = (chg / df['Close'].iloc[-2]) * 100
+        m_cols[i].metric(label=info['name'], value=f"{c:,.2f}", delta=f"{chg:+.2f} ({pct:+.2f}%)")
+        
+    # 製作台股大盤與台積電的「雙線比較圖」(比較近一個月基準績效)
+    if '^TWII' in tw_data and '2330.TW' in tw_data:
+        df_twii = tw_data['^TWII']['df'][['Close']].copy().rename(columns={'Close':'大盤(^TWII)'})
+        df_tsmc = tw_data['2330.TW']['df'][['Close']].copy().rename(columns={'Close':'台積電(2330)'})
+        
+        # 合併數據並計算「累積報酬率 (%)」以利在同一個 Y 軸比較
+        df_merge = pd.merge(df_twii, df_tsmc, left_index=True, right_index=True)
+        df_merge['大盤(^TWII)'] = (df_merge['大盤(^TWII)'] / df_merge['大盤(^TWII)'].iloc[0] - 1) * 100
+        df_merge['台積電(2330)'] = (df_merge['台積電(2330)'] / df_merge['台積電(2330)'].iloc[0] - 1) * 100
+        
+        st.line_chart(df_merge, height=180)
+
+st.divider()
+
+# --- 三欄排版 (下半部：匯率、殖利率、分析總結) ---
+col_fx, col_yield, col_summary = st.columns([1, 1, 1.5], gap="large")
+
+with col_fx:
+    st.subheader("💵 5. 美元匯率指標")
+    for tk, info in data.get('fx', {}).items():
+        df = info['df']
+        c = df['Close'].iloc[-1]
+        p = df['Close'].iloc[-2]
+        chg = c - p
+        pct = (chg / p) * 100
+        
+        # 匯率升貶判斷
+        status = ""
+        if tk == 'TWD=X':
+            status = " (貶值)" if chg > 0 else " (升值)" if chg < 0 else ""
+            st.metric(label=info['name'], value=f"{c:,.3f}", delta=f"{chg:+.3f} {status}", delta_color="inverse")
         else:
-            val_str = f"{c:,.2f}"
-            delta_str = f"{abs(chg):,.2f}"
+            st.metric(label=info['name'], value=f"{c:,.2f}", delta=f"{chg:+.2f} ({pct:+.2f}%)")
 
-        # 這裡絕對不加 <br>，保證每一列都在同一行完美對齊
-        rows += f"""
-        <tr>
-            <td style="font-weight:bold; color:#000;">
-                {item['name']} <span style="font-size:10.5pt; font-weight:normal; color:#666;">({item['symbol']})</span>
-            </td>
-            <td class="text-right val">
-                {val_str}
-            </td>
-            <td class="text-right {color_class}">
-                {arrow} {delta_str} ({sign}{pct:.2f}%){status_text}
-            </td>
-        </tr>
-        """
-    return rows
+with col_yield:
+    st.subheader("🏛️ 6. 美國公債殖利率")
+    y_cols = st.columns(2)
+    for i, (tk, info) in enumerate(data.get('yields', {}).items()):
+        with y_cols[i % 2]:
+            df = info['df']
+            c = df['Close'].iloc[-1]
+            p = df['Close'].iloc[-2]
+            chg = c - p
+            
+            # 殖利率升降判斷
+            status = "升" if chg > 0 else "降" if chg < 0 else "平"
+            st.metric(label=info['name'], value=f"{c:,.3f}%", delta=f"{chg:+.3f} bps ({status})", delta_color="inverse")
 
-# --- 5. 渲染主頁面 ---
-with st.spinner('獲取即時數據中...'):
-    market_data = fetch_data()
-
-today_str = datetime.datetime.now().strftime("%Y年%m/%d %H:%M")
-
-# 頂部 Header
-st.markdown(f"""
-<div style="text-align:center; padding:10px 0 20px 0; border-bottom:3px solid #000; margin-bottom:30px;">
-    <div style="font-size:14pt; font-weight:bold; color:#666; margin-bottom:5px;">{today_str}</div>
-    <h1 style="margin:0; font-size:26pt; font-weight:900; letter-spacing:2px; color:#000;">車庫財經室 晨間戰情看板</h1>
-</div>
-""", unsafe_allow_html=True)
-
-# 兩欄式排版
-col1, col2 = st.columns(2, gap="large")
-
-with col1:
-    st.markdown('<div class="section-title">| 1. 全球主要股市指數</div>', unsafe_allow_html=True)
-    st.markdown(f"<table class='data-table'><tbody>{build_html_rows(market_data.get('1. 全球主要股市指數', []))}</tbody></table>", unsafe_allow_html=True)
+with col_summary:
+    st.subheader("📊 戰情分析與投資建議")
+    st.success("""
+    **💡 核心投資紀律：**
+    * **量化思維：** 排除市場雜訊，讓客觀數據引導每一步策略。
+    * **風險控管：** 匯率與公債為資金流向領先指標，務必堅守停損停利點。
+    * **自動化營運：** 減少手動重覆勞動，將精力專注於策略研發。
     
-    st.markdown('<div class="section-title">| 3. 核心科技巨頭表現</div>', unsafe_allow_html=True)
-    st.markdown(f"<table class='data-table'><tbody>{build_html_rows(market_data.get('3. 核心科技巨頭表現', []))}</tbody></table>", unsafe_allow_html=True)
-
-with col2:
-    st.markdown('<div class="section-title">| 2. 焦點原物料 / 能源</div>', unsafe_allow_html=True)
-    st.markdown(f"<table class='data-table'><tbody>{build_html_rows(market_data.get('2. 焦點原物料 / 能源', []))}</tbody></table>", unsafe_allow_html=True)
-    
-    st.markdown('<div class="section-title">| 4. 台股與總經數據觀測</div>', unsafe_allow_html=True)
-    st.markdown(f"<table class='data-table'><tbody>{build_html_rows(market_data.get('4. 台股與總經數據觀測', []))}</tbody></table>", unsafe_allow_html=True)
-
-# --- 6. 底部分析與建議區塊 ---
-st.markdown('<div class="section-title" style="margin-top: 20px;">| 5. 戰情分析與投資建議</div>', unsafe_allow_html=True)
-
-st.markdown("""
-<div style="padding: 10px 20px; font-family: 'Microsoft JhengHei', sans-serif;">
-    <ul style="margin:0; padding-left:20px; color:#333; line-height:2.0; font-size:11.5pt;">
-        <li><strong style="color:#000;">量化思維：</strong> 讓客觀數據說話，摒除主觀情緒與市場雜訊，嚴格執行交易策略。</li>
-        <li><strong style="color:#000;">風險控管：</strong> 每日追蹤美元匯率與美債殖利率，作為資金流向的領先指標；堅守預設的停損與停利點。</li>
-        <li><strong style="color:#000;">自動化進化：</strong> 持續優化量化交易系統，讓機器處理重複性勞動，將專注力保留給核心策略研發。</li>
-        <li><strong style="color:#000;">系統狀態：</strong> 數據流連線正常，交易模組待命。準備迎接開盤，紀律是獲利的唯一法則。</li>
-    </ul>
-</div>
-""", unsafe_allow_html=True)
+    *(註：系統模組連線正常，請留意科技股板塊的相對強弱與美元強弱指數之變化。)*
+    """)

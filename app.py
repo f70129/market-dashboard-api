@@ -1,36 +1,64 @@
 import streamlit as st
 import yfinance as yf
-import pandas as pd
 import datetime
 
-# --- 網頁全域設定 (暗黑科技風) ---
+# --- 1. Streamlit 全域設定 ---
 st.set_page_config(
     page_title="車庫財經室",
-    page_icon="🛠️",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# --- 隱藏 Streamlit 預設選單與浮水印 ---
-hide_streamlit_style = """
+# 隱藏 Streamlit 預設選單與頁首頁尾，並強制白底
+st.markdown("""
 <style>
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
 header {visibility: hidden;}
-</style>
-"""
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+.stApp { background-color: #ffffff; }
 
-# --- 標的清單 ---
-TICKERS = {
-    "全球主要股市": {"^DJI": "道瓊", "^GSPC": "S&P 500", "^IXIC": "那斯達克", "^SOX": "費半"},
-    "焦點原物料": {"GC=F": "黃金", "SI=F": "白銀", "HG=F": "銅", "BZ=F": "布倫特原油"},
-    "核心科技巨頭": {"AMD": "AMD", "NVDA": "NVDA", "TSM": "TSM", "TSLA": "TSLA", "INTC": "INTC", "MU": "MU", "AAPL": "AAPL"},
-    "台股與總經": {"^TWII": "加權指數", "2330.TW": "台積電", "TWD=X": "美元/台幣", "^TNX": "美10年期公債"}
+/* 區塊標題設計 (灰底 + 黑色左邊框) */
+.section-title {
+    font-size: 14pt;
+    font-weight: bold;
+    color: #000;
+    border-left: 5px solid #000;
+    padding-left: 10px;
+    margin-bottom: 15px;
+    background-color: #f4f4f4;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-family: 'Microsoft JhengHei', sans-serif;
 }
 
-# --- 抓取數據 (加入防呆與快取機制) ---
-@st.cache_data(ttl=300) # 每 5 分鐘自動刷新一次快取
+/* 數據表格設計 */
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'Microsoft JhengHei', sans-serif;
+    margin-bottom: 30px;
+}
+.data-table td {
+    padding: 12px 5px;
+    font-size: 11.5pt;
+    border-bottom: 1px solid #eeeeee;
+    color: #333;
+}
+.data-table td:first-child { font-weight: bold; color: #000; }
+</style>
+""", unsafe_allow_html=True)
+
+# --- 2. 定義追蹤標的 ---
+TICKERS = {
+    "1. 全球主要股市指數": {"^DJI": "道瓊", "^GSPC": "S&P 500", "^IXIC": "那斯達克", "^SOX": "費半"},
+    "2. 焦點原物料 / 能源": {"GC=F": "黃金", "CL=F": "WTI原油", "SI=F": "白銀", "HG=F": "銅"},
+    "3. 核心科技巨頭表現": {"AMD": "AMD", "NVDA": "NVDA", "TSM": "TSM", "TSLA": "TSLA", "INTC": "INTC", "MU": "MU", "AAPL": "AAPL"},
+    "4. 台股與總經數據觀測": {"^TWII": "加權指數", "2330.TW": "台積電", "TWD=X": "美元/台幣", "^TNX": "美10年期公債"}
+}
+
+# --- 3. 抓取資料函數 (快取 5 分鐘) ---
+@st.cache_data(ttl=300)
 def fetch_data():
     results = {}
     for category, group in TICKERS.items():
@@ -48,80 +76,98 @@ def fetch_data():
                         "name": name, "symbol": tk, "close": last, "chg": chg, "pct": pct, "has_data": True
                     })
                 else:
-                    results[category].append({
-                        "name": name, "symbol": tk, "close": 0.0, "chg": 0.0, "pct": 0.0, "has_data": False
-                    })
-            except Exception as e:
-                results[category].append({
-                    "name": name, "symbol": tk, "close": 0.0, "chg": 0.0, "pct": 0.0, "has_data": False
-                })
+                    results[category].append({"name": name, "symbol": tk, "close": 0, "chg": 0, "pct": 0, "has_data": False})
+            except Exception:
+                results[category].append({"name": name, "symbol": tk, "close": 0, "chg": 0, "pct": 0, "has_data": False})
     return results
 
-# --- 頁面標題 ---
-today = datetime.datetime.now().strftime("%Y年 %m/%d %H:%M")
-st.title("🛠️ 車庫財經室 晨間戰情看板")
-st.caption(f"數據最後更新時間: {today} (自動緩存 5 分鐘)")
-st.divider()
-
-# --- 載入數據 ---
-with st.spinner('連線至全球市場獲取即時數據中...'):
-    data = fetch_data()
-
-# --- 繪製 Dashboard 版面 ---
-for category, items in TICKERS.items():
-    st.subheader(f"📌 {category}")
-    
-    cols = st.columns(len(items))
-    category_data = data.get(category, [])
-    
-    for i, item_info in enumerate(category_data):
-        with cols[i]:
-            name = item_info['name']
+# --- 4. 將資料轉為 HTML 表格列的函數 ---
+def build_html_rows(data_list):
+    rows = ""
+    for item in data_list:
+        if not item['has_data']:
+            rows += f"<tr><td style='font-weight:bold; color:#000;'>{item['name']} <span style='font-weight:normal; font-size:10pt; color:#888;'>({item['symbol']})</span></td><td colspan='2' style='text-align:right; color:#999;'>暫無報價</td></tr>"
+            continue
             
-            # 若無數據，顯示佔位符
-            if not item_info['has_data']:
-                st.metric(label=name, value="暫無報價", delta="-")
-                continue
-                
-            c = item_info['close']
-            chg = item_info['chg']
-            pct = item_info['pct']
-            
-            # 特殊邏輯處理
-            if item_info['symbol'] == 'TWD=X':
-                val_str = f"{c:.3f}"
-                delta_str = f"{chg:.3f} ({pct:.2f}%)"
-                st.metric(label=name, value=val_str, delta=delta_str, delta_color="inverse")
-            
-            elif item_info['symbol'] == '^TNX':
-                val_str = f"{c:.3f}%"
-                delta_str = f"{chg:.3f} bps ({pct:.2f}%)"
-                st.metric(label=name, value=val_str, delta=delta_str, delta_color="inverse")
-                
-            else:
-                val_str = f"{c:,.2f}"
-                delta_str = f"{chg:.2f} ({pct:.2f}%)"
-                st.metric(label=name, value=val_str, delta=delta_str, delta_color="normal")
-                
-    st.divider()
+        c = item['close']
+        chg = item['chg']
+        pct = item['pct']
+        
+        # 決定顏色與箭頭 (台灣習慣紅漲綠跌)
+        color_color = "#d32f2f" if chg > 0 else "#388e3c" if chg < 0 else "#666666"
+        sign = "+" if chg > 0 else ""
+        arrow = "▲" if chg > 0 else "▼" if chg < 0 else "-"
+        
+        # 特殊邏輯處理 (匯率與殖利率)
+        status_text = ""
+        if item['symbol'] == 'TWD=X':
+            status_text = f" <span style='font-size:9.5pt; font-weight:normal; color:#666;'>({'貶值' if chg > 0 else '升值' if chg < 0 else '持平'})</span>"
+            val_str = f"{c:,.3f}"
+            delta_str = f"{abs(chg):,.3f}"
+        elif item['symbol'] == '^TNX':
+            status_text = f" <span style='font-size:9.5pt; font-weight:normal; color:#666;'>({'升' if chg > 0 else '降' if chg < 0 else '持平'})</span>"
+            val_str = f"{c:,.3f}%"
+            delta_str = f"{abs(chg):,.3f} bps"
+        else:
+            val_str = f"{c:,.2f}"
+            delta_str = f"{abs(chg):,.2f}"
 
-# --- 新增：總結與投資建議區塊 ---
-st.subheader("📊 戰情總結與核心建議")
+        rows += f"""
+        <tr>
+            <td style="font-weight:bold; color:#000;">
+                {item['name']} <span style="font-weight:normal; font-size:10pt; color:#888;">({item['symbol']})</span>
+            </td>
+            <td style="text-align:right; font-weight:bold; color:#000;">
+                {val_str}
+            </td>
+            <td style="text-align:right; font-weight:bold; color:{color_color};">
+                {arrow} {delta_str} ({sign}{pct:.2f}%){status_text}
+            </td>
+        </tr>
+        """
+    return rows
 
-col1, col2 = st.columns([2, 1])
+# --- 5. 渲染主頁面 ---
+with st.spinner('獲取即時數據中...'):
+    market_data = fetch_data()
+
+today_str = datetime.datetime.now().strftime("%Y年%m/%d")
+
+# 頂部 Header
+st.markdown(f"""
+<div style="text-align:center; padding:10px 0 20px 0; border-bottom:3px solid #000; margin-bottom:30px;">
+    <div style="font-size:15pt; font-weight:bold; color:#666; margin-bottom:5px;">{today_str}</div>
+    <h1 style="margin:0; font-size:28pt; font-weight:900; letter-spacing:2px; color:#000;">車庫財經室 晨間戰情看板</h1>
+</div>
+""", unsafe_allow_html=True)
+
+# 兩欄式排版 (數據區塊)
+col1, col2 = st.columns(2, gap="large")
 
 with col1:
-    st.markdown("""
-    #### 💡 核心投資紀律
-    * **量化思維**：排除市場雜訊與主觀情緒，讓客觀數據引導每一步策略。
-    * **風險控管**：匯率與公債為資金流向的領先指標，務必堅守預設的停損與停利點。
-    * **自動化營運**：減少手動重覆勞動，將專注力保留給高價值的策略研發。
-    """)
+    st.markdown('<div class="section-title">| 1. 全球主要股市指數</div>', unsafe_allow_html=True)
+    st.markdown(f"<table class='data-table'><tbody>{build_html_rows(market_data.get('1. 全球主要股市指數', []))}</tbody></table>", unsafe_allow_html=True)
+    
+    st.markdown('<div class="section-title">| 3. 核心科技巨頭表現</div>', unsafe_allow_html=True)
+    st.markdown(f"<table class='data-table'><tbody>{build_html_rows(market_data.get('3. 核心科技巨頭表現', []))}</tbody></table>", unsafe_allow_html=True)
 
 with col2:
-    st.info("""
-    **⚙️ 系統狀態**
+    st.markdown('<div class="section-title">| 2. 焦點原物料 / 能源</div>', unsafe_allow_html=True)
+    st.markdown(f"<table class='data-table'><tbody>{build_html_rows(market_data.get('2. 焦點原物料 / 能源', []))}</tbody></table>", unsafe_allow_html=True)
     
-    量化監控模組已連線。
-    波動是市場的日常，**紀律才是最終的勝利！**
-    """)
+    st.markdown('<div class="section-title">| 4. 台股與總經數據觀測</div>', unsafe_allow_html=True)
+    st.markdown(f"<table class='data-table'><tbody>{build_html_rows(market_data.get('4. 台股與總經數據觀測', []))}</tbody></table>", unsafe_allow_html=True)
+
+# --- 6. 底部分析與建議區塊 ---
+st.markdown('<div class="section-title" style="margin-top: 20px;">| 5. 戰情分析與投資建議</div>', unsafe_allow_html=True)
+
+st.markdown("""
+<div style="padding: 10px 20px; font-family: 'Microsoft JhengHei', sans-serif;">
+    <ul style="margin:0; padding-left:20px; color:#333; line-height:2.0; font-size:12pt;">
+        <li><strong style="color:#000;">量化思維：</strong> 讓客觀數據說話，摒除主觀情緒與市場雜訊，嚴格執行交易策略。</li>
+        <li><strong style="color:#000;">風險控管：</strong> 每日追蹤美元匯率與美債殖利率，作為資金流向的領先指標；堅守預設的停損與停利點。</li>
+        <li><strong style="color:#000;">自動化進化：</strong> 持續優化量化交易系統，讓機器處理重複性勞動，將專注力保留給核心策略研發。</li>
+        <li><strong style="color:#000;">系統狀態：</strong> 數據流連線正常，交易模組待命。準備迎接開盤，紀律是獲利的唯一法則。</li>
+    </ul>
+</div>
+""", unsafe_allow_html=True)
